@@ -1,6 +1,7 @@
 import os
-from typing import List
+from typing import List, Optional
 from firecrawl import Firecrawl
+from bs4 import BeautifulSoup
 from .schema import Lawyer
 from dotenv import load_dotenv
 
@@ -8,7 +9,7 @@ load_dotenv()
 
 
 class LawyerExtractor:
-    """Extracts lawyer data from Justia using Firecrawl."""
+    """Extracts lawyer data from Justia using manual HTML parsing."""
 
     def __init__(self, api_key: str = None, api_url: str = None):
         """
@@ -43,60 +44,272 @@ class LawyerExtractor:
         Returns:
             List of Lawyer objects with extracted data
         """
-        # Note: Firecrawl's FIRE-1 agent handles pagination automatically.
-        # The max_pages parameter serves as a conceptual limit; actual pagination
-        # behavior depends on Firecrawl's internal implementation.
-        schema = Lawyer.model_json_schema()
+        lawyers = []
+        current_url = start_url
+        pages_scraped = 0
 
-        extraction_result = self.app.extract(
-            urls=[start_url],
-            prompt="""
-            Extract ALL lawyer listings from this page.
-            For each lawyer, find:
-            - Their full name (Name)
-            - Phone number (Phone) - may be in 'Call' button or contact section
-            - Office address (Address) - look for address near their name
-            - Profile URL (Profile_URL) - link to their Justia profile page
-            - Bio/Experience (Bio_Experience) - law school, years experience, or practice description
+        while pages_scraped < max_pages and current_url:
+            print(f"Scraping page {pages_scraped + 1}: {current_url}")
 
-            Return an array of lawyer objects. Follow pagination links to next pages up to the page limit.
-            """,
-            schema={
-                "type": "object",
-                "properties": {
-                    "lawyers": {
-                        "type": "array",
-                        "items": schema
-                    }
-                },
-                "required": ["lawyers"]
-            }
-            # Note: agent parameter is cloud-only (FIRE-1). Self-hosted uses
-            # the configured LLM (OpenAI/Ollama) without explicit agent.
-        )
+            # Scrape the page to get HTML content
+            try:
+                scrape_result = self.app.scrape(url=current_url, formats=["html"])
+            except Exception as e:
+                print(f"Error scraping {current_url}: {e}")
+                break
 
-        # Extract the lawyers array from the result
-        if not extraction_result.data:
+            # Extract HTML from result
+            if not hasattr(scrape_result, 'html') or not scrape_result.html:
+                print(f"No HTML content returned from {current_url}")
+                break
+
+            html = scrape_result.html
+            page_lawyers = self._parse_lawyers_from_html(html)
+            lawyers.extend(page_lawyers)
+
+            print(f"  Found {len(page_lawyers)} lawyers on this page")
+
+            # Find next page link
+            if pages_scraped < max_pages - 1:
+                current_url = self._find_next_page(html, start_url)
+                if not current_url:
+                    print("  No more pages found")
+                    break
+            else:
+                break
+
+            pages_scraped += 1
+
+        print(f"Total lawyers extracted: {len(lawyers)}")
+        return lawyers
+
+    def _parse_lawyers_from_html(self, html: str) -> List[Lawyer]:
+        """
+        Parse lawyer listings from HTML content.
+
+        Args:
+            html: Raw HTML of the Justia directory page
+
+        Returns:
+            List of Lawyer objects
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        lawyers = []
+
+        # Justia typically uses lawyer cards with specific classes
+        # Common selectors for lawyer listing containers
+        lawyer_selectors = [
+            'div.lawyer-card',
+            'div.attorney-listing',
+            'div.listing',
+            'div.lawyer-listing',
+            'div.profile-listing',
+            'div.card.lawyer',
+            '[class*="lawyer"]',
+            '[class*="attorney"]',
+            '[class*="profile"]',
+        ]
+
+        lawyer_containers = None
+        for selector in lawyer_selectors:
+            containers = soup.select(selector)
+            if containers and len(containers) > 0:
+                lawyer_containers = containers
+                print(f"    Using selector: {selector} ({len(containers)} elements)")
+                break
+
+        if not lawyer_containers:
+            # Fallback: try to find by common structure
+            lawyer_containers = soup.find_all('div', class_=lambda x: x and ('lawyer' in x.lower() or 'attorney' in x.lower() or 'profile' in x.lower()))
+
+        if not lawyer_containers:
+            print("   Warning: No lawyer containers found with any selector")
             return []
 
-        # The result structure: data[0].content contains the extracted lawyers
-        first_result = extraction_result.data[0]
-        content = first_result.content if hasattr(first_result, 'content') else first_result
-
-        if isinstance(content, dict) and 'lawyers' in content:
-            lawyers_data = content['lawyers']
-        else:
-            # If the schema wasn't wrapped, assume the content is the list
-            lawyers_data = content if isinstance(content, list) else []
-
-        # Convert to Lawyer objects, skipping invalid entries
-        lawyers = []
-        for item in lawyers_data:
+        for container in lawyer_containers:
             try:
-                lawyer = Lawyer(**item)
-                lawyers.append(lawyer)
+                lawyer = self._parse_lawyer_from_container(container)
+                if lawyer:
+                    lawyers.append(lawyer)
             except Exception as e:
-                print(f"Warning: Skipping invalid lawyer data: {e}")
+                print(f"Warning: Skipping lawyer container due to error: {e}")
                 continue
 
         return lawyers
+
+    def _parse_lawyer_from_container(self, container) -> Optional[Lawyer]:
+        """
+        Extract lawyer data from a single container element.
+
+        Args:
+            container: BeautifulSoup element representing one lawyer listing
+
+        Returns:
+            Lawyer object or None if parsing fails
+        """
+        # Extract name - typically in a heading or link
+        name = self._extract_text(container, ['h3', 'h2', 'h1', '.lawyer-name', '.attorney-name', '.profile-name', 'a[class*="name"]'])
+        if not name:
+            return None
+
+        # Extract phone - look for phone icons, tel: links, or phone class
+        phone = self._extract_phone(container)
+
+        # Extract address - look for address tags or address class
+        address = self._extract_address(container)
+
+        # Extract profile URL - usually the first link to a profile page
+        profile_url = self._extract_profile_url(container)
+        if not profile_url:
+            return None  # Profile URL is required
+
+        # Extract bio/experience - look for bio, experience, or description
+        bio_experience = self._extract_bio(container)
+
+        # Validate and create Lawyer object
+        try:
+            return Lawyer(
+                Name=name,
+                Phone=phone,
+                Address=address,
+                Profile_URL=profile_url,
+                Bio_Experience=bio_experience,
+            )
+        except Exception as e:
+            print(f"   Warning: Failed to create Lawyer for {name}: {e}")
+            return None
+
+    def _extract_text(self, container, selectors: List[str]) -> Optional[str]:
+        """Try multiple selectors to extract text."""
+        for selector in selectors:
+            element = container.select_one(selector)
+            if element:
+                text = element.get_text(strip=True)
+                if text:
+                    return text
+        return None
+
+    def _extract_phone(self, container) -> Optional[str]:
+        """Extract phone number."""
+        # Look for tel: links
+        tel_link = container.select_one('a[href^="tel:"]')
+        if tel_link:
+            return tel_link['href'].replace('tel:', '').strip()
+
+        # Look for phone class or text containing phone digits
+        phone_elements = container.find_all(class_=lambda x: x and 'phone' in x.lower())
+        for elem in phone_elements:
+            text = elem.get_text(strip=True)
+            if text and any(c.isdigit() for c in text):
+                return text
+
+        # Search for phone pattern in text
+        import re
+        text = container.get_text()
+        phone_match = re.search(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
+        if phone_match:
+            return phone_match.group()
+
+        return None
+
+    def _extract_address(self, container) -> Optional[str]:
+        """Extract address."""
+        # Look for address tag
+        addr_elem = container.find('address')
+        if addr_elem:
+            return addr_elem.get_text(strip=True)
+
+        # Look for address class
+        addr_class = container.select_one('.address, .location, .addr')
+        if addr_class:
+            return addr_class.get_text(strip=True)
+
+        # Look for multiple lines that might be address (city, state pattern)
+        # This is a heuristic - just return first line with city/state
+        lines = container.find_all(['p', 'div', 'span'])
+        for line in lines:
+            text = line.get_text(strip=True)
+            if text and (',' in text) and any(c.isalpha() for c in text):
+                # Likely contains city, state
+                return text
+
+        return None
+
+    def _extract_profile_url(self, container) -> Optional[str]:
+        """Extract profile URL."""
+        # Look for links that contain '/lawyers/' or '/attorneys/'
+        links = container.find_all('a', href=True)
+        for link in links:
+            href = link['href']
+            if '/lawyers/' in href or '/attorneys/' in href or '/profile/' in href:
+                # Convert relative URLs to absolute if needed
+                if href.startswith('/'):
+                    href = f"https://www.justia.com{href}"
+                return href
+        return None
+
+    def _extract_bio(self, container) -> Optional[str]:
+        """Extract bio/experience."""
+        # Look for bio, experience, or description elements
+        bio_elem = container.select_one('.bio, .experience, .description, .about')
+        if bio_elem:
+            text = bio_elem.get_text(strip=True)
+            if text:
+                return text[:500]  # Limit length
+
+        # Look for paragraphs that might be bio (exclude short ones)
+        paragraphs = container.find_all('p')
+        for p in paragraphs:
+            text = p.get_text(strip=True)
+            if text and len(text) > 50:  # Likely a bio paragraph
+                return text[:500]
+
+        return None
+
+    def _find_next_page(self, html: str, base_url: str) -> Optional[str]:
+        """
+        Find the URL of the next page.
+
+        Args:
+            html: Current page HTML
+            base_url: Base URL for constructing absolute links
+
+        Returns:
+            Next page URL or None if not found
+        """
+        soup = BeautifulSoup(html, 'lxml')
+
+        # Common pagination selectors
+        pagination_selectors = [
+            'a[rel="next"]',
+            'a.next',
+            'a.pagination-next',
+            'li.next a',
+            'a:contains("Next")',
+            'a[title="Next"]',
+        ]
+
+        for selector in pagination_selectors:
+            next_link = soup.select_one(selector)
+            if next_link and next_link.get('href'):
+                href = next_link['href']
+                if href.startswith('http'):
+                    return href
+                elif href.startswith('/'):
+                    # Construct absolute URL
+                    from urllib.parse import urljoin
+                    return urljoin(base_url, href)
+
+        # Also look for "Next" text in pagination
+        for link in soup.find_all('a'):
+            text = link.get_text(strip=True).lower()
+            if 'next' in text or '»' in text or '>' in text:
+                href = link.get('href')
+                if href:
+                    if href.startswith('http'):
+                        return href
+                    elif href.startswith('/'):
+                        from urllib.parse import urljoin
+                        return urljoin(base_url, href)
+
+        return None
