@@ -87,6 +87,8 @@ class LawyerExtractor:
         """
         Parse lawyer listings from HTML content.
 
+        Strategy: Find all links to individual lawyer profiles, then locate their container elements.
+
         Args:
             html: Raw HTML of the Justia directory page
 
@@ -96,57 +98,50 @@ class LawyerExtractor:
         soup = BeautifulSoup(html, 'lxml')
         lawyers = []
 
-        # Justia typically uses lawyer cards with specific classes
-        # Start with the most specific selectors first
-        lawyer_selectors = [
-            'div.lawyer-card',                 # Very specific
-            'div.attorney-card',
-            'article.lawyer',
-            'article.attorney',
-            'div.listing-item',
-            'div.profile-card',
-            'div[itemtype*="Person"]',        # Schema.org Person markup
-            'div[itemtype*="Attorney"]',
-            'div.result',                     # Common for search results
-            'div.search-result',
-            # More general but still targeted
-            'div[class*="lawyer-card"]',
-            'div[class*="attorney-card"]',
-            'div[class*="profile-card"]',
-            'div[class*="listing"]',
-        ]
+        # Find all links that point to individual lawyer profiles
+        # Pattern: /lawyers/[practice-area]/[location]/[lawyer-name]/
+        profile_links = soup.find_all('a', href=lambda h: h and '/lawyers/' in h and len(h.split('/')) > 5)
 
-        lawyer_containers = None
-        for selector in lawyer_selectors:
-            containers = soup.select(selector)
-            if containers and len(containers) > 0:
-                # Filter out obvious page-level containers (too many children)
-                # A lawyer card typically has < 20 children elements
-                filtered = [c for c in containers if len(c.find_all()) < 50]
-                if filtered and len(filtered) > 0:
-                    lawyer_containers = filtered
-                    print(f"    Using selector: {selector} ({len(filtered)} elements after filtering)")
-                    break
+        print(f"    Found {len(profile_links)} potential profile links")
 
-        if not lawyer_containers:
-            # Fallback: look for elements that contain profile links and names
-            all_candidates = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and ('lawyer' in x.lower() or 'attorney' in x.lower() or 'profile' in x.lower() or 'result' in x.lower()))
-            # Further filter: must contain a link to a lawyer profile page
-            lawyer_containers = []
-            for cand in all_candidates:
-                profile_link = cand.find('a', href=lambda h: h and '/lawyers/' in h)
-                name_elem = cand.find(['h3', 'h2', 'h1'], class_=lambda x: x and ('name' in x.lower() or 'title' in x.lower()))
-                if profile_link and len(cand.find_all()) < 50:
-                    lawyer_containers.append(cand)
-
-            print(f"    Fallback search found {len(lawyer_containers)} potential lawyer containers")
-
-        if not lawyer_containers:
-            print("   Warning: No lawyer containers found")
+        if not profile_links:
             return []
 
-        # Process each container
-        for container in lawyer_containers:
+        # For each profile link, find its container (card)
+        containers = []
+        for link in profile_links:
+            # Walk up the DOM to find a suitable container
+            parent = link.find_parent(['div', 'article', 'li'])
+            depth = 0
+            while parent and depth < 10:
+                parent_class = parent.get('class', [])
+                if parent_class:
+                    class_str = ' '.join(parent_class).lower()
+                    # Exclude obvious non-lawyer containers
+                    if any(bad in class_str for bad in ['banner', 'group', 'stripe', 'header', 'footer', 'sidebar', 'pagination']):
+                        parent = parent.find_parent(['div', 'article', 'li'])
+                        depth += 1
+                        continue
+                    # Accept if it seems like a card (reasonable size)
+                    if len(parent.find_all()) < 200:
+                        containers.append(parent)
+                        break
+                parent = parent.find_parent(['div', 'article', 'li'])
+                depth += 1
+
+        # Deduplicate by ID or by content hash
+        unique_containers = []
+        seen_ids = set()
+        for c in containers:
+            cid = id(c)
+            if cid not in seen_ids:
+                unique_containers.append(c)
+                seen_ids.add(cid)
+
+        print(f"    Found {len(unique_containers)} unique lawyer containers")
+
+        # Parse each container
+        for container in unique_containers:
             try:
                 lawyer = self._parse_lawyer_from_container(container)
                 if lawyer:
@@ -155,7 +150,7 @@ class LawyerExtractor:
                 print(f"Warning: Skipping lawyer container due to error: {e}")
                 continue
 
-        print(f"    Successfully parsed {len(lawyers)} lawyers from {len(lawyer_containers)} containers")
+        print(f"    Successfully parsed {len(lawyers)} lawyers from {len(unique_containers)} containers")
         return lawyers
 
     def _parse_lawyer_from_container(self, container) -> Optional[Lawyer]:
@@ -168,32 +163,30 @@ class LawyerExtractor:
         Returns:
             Lawyer object or None if parsing fails
         """
-        # Extract name - typically in a heading or link
+        # Extract name - typically the profile link text or heading
         name = self._extract_name(container)
         if not name:
-            # Debug: print why missing
             profile_url = self._extract_profile_url(container)
             print(f"   DEBUG: Container skipped - name='None', profile_url='{profile_url}'")
-            # Show a snippet of the container HTML for debugging
             snippet = str(container)[:200]
             print(f"   Container snippet: {snippet}...")
             return None
 
-        # Extract phone - look for phone icons, tel: links, or phone class
+        # Extract phone
         phone = self._extract_phone(container)
 
-        # Extract address - look for address tags or address class
+        # Extract address
         address = self._extract_address(container)
 
-        # Extract profile URL - usually the first link to a profile page
+        # Extract profile URL (required)
         profile_url = self._extract_profile_url(container)
         if not profile_url:
             print(f"   DEBUG: Container skipped - name='{name}', profile_url='None'")
             snippet = str(container)[:200]
             print(f"   Container snippet: {snippet}...")
-            return None  # Profile URL is required
+            return None
 
-        # Extract bio/experience - look for bio, experience, or description
+        # Extract bio/experience
         bio_experience = self._extract_bio(container)
 
         # Validate and create Lawyer object
@@ -210,11 +203,12 @@ class LawyerExtractor:
             return None
 
     def _extract_name(self, container) -> Optional[str]:
-        """Extract lawyer name with priority: profile link > headings > name classes."""
+        """Extract lawyer name."""
+        # Priority: profile link text, then headings, then name classes
         selectors = [
-            'a[href*="/lawyers/"]',  # Profile link (contains the name)
-            'h3', 'h2', 'h1',        # Common heading tags for names
-            '.lawyer-name', '.attorney-name', '.profile-name', '.name', '.title'
+            'a[href*="/lawyers/"]',  # Profile link (most reliable)
+            'h3', 'h2', 'h1', 'h4',
+            '.lawyer-name', '.attorney-name', '.profile-name', '.name', '.title', '.card-title'
         ]
         return self._extract_text(container, selectors)
 
@@ -224,25 +218,28 @@ class LawyerExtractor:
             element = container.select_one(selector)
             if element:
                 text = element.get_text(strip=True)
-                if text:
+                if text and len(text) > 2:
+                    # Filter out obvious non-name text
+                    if any(bad in text.lower() for bad in ['privacy', 'terms', 'cookie', 'copyright']):
+                        continue
                     return text
         return None
 
     def _extract_phone(self, container) -> Optional[str]:
         """Extract phone number."""
-        # Look for tel: links
+        # tel: links
         tel_link = container.select_one('a[href^="tel:"]')
         if tel_link:
             return tel_link['href'].replace('tel:', '').strip()
 
-        # Look for phone class or text containing phone digits
+        # Phone class elements
         phone_elements = container.find_all(class_=lambda x: x and 'phone' in x.lower())
         for elem in phone_elements:
             text = elem.get_text(strip=True)
             if text and any(c.isdigit() for c in text):
                 return text
 
-        # Search for phone pattern in text
+        # Regex pattern
         import re
         text = container.get_text()
         phone_match = re.search(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
@@ -253,35 +250,32 @@ class LawyerExtractor:
 
     def _extract_address(self, container) -> Optional[str]:
         """Extract address."""
-        # Look for address tag
+        # address tag
         addr_elem = container.find('address')
         if addr_elem:
             return addr_elem.get_text(strip=True)
 
-        # Look for address class
-        addr_class = container.select_one('.address, .location, .addr')
+        # Address class
+        addr_class = container.select_one('.address, .location, .addr, .street-address')
         if addr_class:
             return addr_class.get_text(strip=True)
 
-        # Look for multiple lines that might be address (city, state pattern)
-        # This is a heuristic - just return first line with city/state
+        # Look for city/state pattern
         lines = container.find_all(['p', 'div', 'span'])
         for line in lines:
             text = line.get_text(strip=True)
-            if text and (',' in text) and any(c.isalpha() for c in text):
-                # Likely contains city, state
+            if text and ',' in text and any(c.isalpha() for c in text) and 10 < len(text) < 100:
                 return text
 
         return None
 
     def _extract_profile_url(self, container) -> Optional[str]:
         """Extract profile URL."""
-        # Look for links that contain '/lawyers/' or '/attorneys/'
         links = container.find_all('a', href=True)
         for link in links:
             href = link['href']
-            if '/lawyers/' in href or '/attorneys/' in href or '/profile/' in href:
-                # Convert relative URLs to absolute if needed
+            # Must be a lawyer profile with practice area and location in path
+            if '/lawyers/' in href and len(href.split('/')) > 5:
                 if href.startswith('/'):
                     href = f"https://www.justia.com{href}"
                 return href
@@ -289,60 +283,54 @@ class LawyerExtractor:
 
     def _extract_bio(self, container) -> Optional[str]:
         """Extract bio/experience."""
-        # Look for bio, experience, or description elements
-        bio_elem = container.select_one('.bio, .experience, .description, .about')
+        bio_elem = container.select_one('.bio, .experience, .description, .about, .summary, .profile-bio')
         if bio_elem:
             text = bio_elem.get_text(strip=True)
             if text:
-                return text[:500]  # Limit length
+                return text[:500]
 
-        # Look for paragraphs that might be bio (exclude short ones)
         paragraphs = container.find_all('p')
         for p in paragraphs:
             text = p.get_text(strip=True)
-            if text and len(text) > 50:  # Likely a bio paragraph
+            if text and 50 < len(text) < 1000:
+                if any(bad in text.lower() for bad in ['privacy', 'cookie', 'terms', 'disclaimer']):
+                    continue
                 return text[:500]
 
         return None
 
     def _find_next_page(self, html: str, base_url: str) -> Optional[str]:
-        """
-        Find the URL of the next page.
-
-        Args:
-            html: Current page HTML
-            base_url: Base URL for constructing absolute links
-
-        Returns:
-            Next page URL or None if not found
-        """
+        """Find the URL of the next page."""
         soup = BeautifulSoup(html, 'lxml')
 
-        # Common pagination selectors
         pagination_selectors = [
             'a[rel="next"]',
             'a.next',
             'a.pagination-next',
             'li.next a',
-            'a:contains("Next")',
             'a[title="Next"]',
+            'a[aria-label="Next"]',
+            'a:-soup-contains("Next")',
+            'a:-soup-contains(">")',
+            'a:-soup-contains("»")',
         ]
 
         for selector in pagination_selectors:
-            next_link = soup.select_one(selector)
-            if next_link and next_link.get('href'):
-                href = next_link['href']
-                if href.startswith('http'):
-                    return href
-                elif href.startswith('/'):
-                    # Construct absolute URL
-                    from urllib.parse import urljoin
-                    return urljoin(base_url, href)
+            try:
+                next_link = soup.select_one(selector)
+                if next_link and next_link.get('href'):
+                    href = next_link['href']
+                    if href.startswith('http'):
+                        return href
+                    elif href.startswith('/'):
+                        from urllib.parse import urljoin
+                        return urljoin(base_url, href)
+            except Exception:
+                continue
 
-        # Also look for "Next" text in pagination
         for link in soup.find_all('a'):
             text = link.get_text(strip=True).lower()
-            if 'next' in text or '»' in text or '>' in text:
+            if 'next' in text or '»' in text or '>' in text or '→' in text:
                 href = link.get('href')
                 if href:
                     if href.startswith('http'):
