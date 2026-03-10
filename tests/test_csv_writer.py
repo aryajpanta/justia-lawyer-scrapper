@@ -48,3 +48,50 @@ def test_write_lawyers_to_csv_creates_valid_csv():
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def test_write_lawyers_to_csv_with_empty_list():
+    """Test that write_csv handles empty list without error."""
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as tmp:
+        tmp_path = tmp.name
+
+    try:
+        write_lawyers_to_csv([], output_path=tmp_path)
+        # Should create empty file with only header
+        assert os.path.exists(tmp_path)
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            assert "Name,Phone,Address,Profile_URL,Bio_Experience" in content
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def test_write_lawyers_to_csv_with_missing_optional_fields():
+    """Test that optional fields are written as empty strings."""
+    lawyers = [
+        Lawyer(
+            Name="Alice Test",
+            Phone=None,
+            Address=None,
+            Profile_URL="https://test.com",
+            Bio_Experience=None,
+        )
+    ]
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as tmp:
+        tmp_path = tmp.name
+
+    try:
+        write_lawyers_to_csv(lawyers, output_path=tmp_path)
+
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "Alice Test" in content
+        assert "https://test.com" in content
+        # Ensure there are consecutive commas for missing fields
+        assert ",," in content  # Empty Phone and Address fields
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)

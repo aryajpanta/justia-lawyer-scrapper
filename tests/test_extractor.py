@@ -33,3 +33,16 @@ def test_extract_lawyers_returns_list_of_lawyer_objects():
     assert len(lawyers) == 1
     assert isinstance(lawyers[0], Lawyer)
     assert lawyers[0].Name == "John Doe"
+
+
+def test_extract_lawyers_handles_empty_results():
+    """Test that extractor handles pages with no lawyers gracefully."""
+    extractor = LawyerExtractor(api_key="test-key")
+
+    mock_result = Mock()
+    mock_result.data = [Mock(content={})]
+
+    with patch.object(extractor.app, "extract", return_value=mock_result):
+        lawyers = extractor.extract_from_url("https://www.justia.com/test", max_pages=1)
+
+    assert lawyers == []
