@@ -35,14 +35,21 @@ def main():
         default="immigration_lawyers.csv",
         help="Output CSV file path (default: immigration_lawyers.csv)",
     )
+    parser.add_argument(
+        "--api-url",
+        default=None,
+        help="Firecrawl API URL for self-hosted instances (default: uses FIRECRAWL_API_URL env var or cloud API)",
+    )
 
     args = parser.parse_args()
 
     try:
         print(f"Starting extraction from: {args.url}")
         print(f"Max pages: {args.max_pages}")
+        if args.api_url:
+            print(f"Using custom API URL: {args.api_url}")
 
-        extractor = LawyerExtractor()
+        extractor = LawyerExtractor(api_url=args.api_url)
         lawyers = extractor.extract_from_url(
             start_url=args.url, max_pages=args.max_pages
         )

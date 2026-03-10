@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from justia_scraper.extractor import LawyerExtractor
 from justia_scraper.schema import Lawyer
 
@@ -46,3 +46,28 @@ def test_extract_lawyers_handles_empty_results():
         lawyers = extractor.extract_from_url("https://www.justia.com/test", max_pages=1)
 
     assert lawyers == []
+
+
+def test_extractor_initializes_with_api_url():
+    """Test that extractor accepts and uses custom api_url."""
+    with patch("justia_scraper.extractor.Firecrawl") as mock_firecrawl:
+        mock_firecrawl.return_value = MagicMock()
+
+        # Test with custom API URL
+        extractor = LawyerExtractor(api_key="test-key", api_url="http://localhost:3002")
+
+        mock_firecrawl.assert_called_once_with(api_key="test-key", api_url="http://localhost:3002")
+        assert extractor.api_url == "http://localhost:3002"
+
+
+def test_extractor_uses_env_api_url():
+    """Test that extractor reads FIRECRAWL_API_URL from environment."""
+    with patch("justia_scraper.extractor.Firecrawl") as mock_firecrawl, \
+         patch.dict("os.environ", {"FIRECRAWL_API_URL": "http://localhost:3002"}):
+        mock_firecrawl.return_value = MagicMock()
+
+        extractor = LawyerExtractor(api_key="test-key")
+
+        mock_firecrawl.assert_called_once_with(api_key="test-key", api_url="http://localhost:3002")
+        assert extractor.api_url == "http://localhost:3002"
+

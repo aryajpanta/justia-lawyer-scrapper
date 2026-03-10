@@ -10,14 +10,27 @@ load_dotenv()
 class LawyerExtractor:
     """Extracts lawyer data from Justia using Firecrawl."""
 
-    def __init__(self, api_key: str = None):
-        """Initialize with Firecrawl API key."""
+    def __init__(self, api_key: str = None, api_url: str = None):
+        """
+        Initialize with Firecrawl configuration.
+
+        Args:
+            api_key: Firecrawl API key (or set FIRECRAWL_API_KEY env var)
+            api_url: Custom API URL for self-hosted instances
+                      (or set FIRECRAWL_API_URL env var, default: cloud API)
+        """
         self.api_key = api_key or os.getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "FIRECRAWL_API_KEY must be provided or set in environment variables"
             )
-        self.app = Firecrawl(api_key=self.api_key)
+        self.api_url = api_url or os.getenv("FIRECRAWL_API_URL")
+
+        # Only pass api_url if it's set, to avoid Firecrawl SDK errors with None
+        if self.api_url:
+            self.app = Firecrawl(api_key=self.api_key, api_url=self.api_url)
+        else:
+            self.app = Firecrawl(api_key=self.api_key)
 
     def extract_from_url(self, start_url: str, max_pages: int = 5) -> List[Lawyer]:
         """
@@ -57,10 +70,9 @@ class LawyerExtractor:
                     }
                 },
                 "required": ["lawyers"]
-            },
-            agent={
-                "model": "FIRE-1"
             }
+            # Note: agent parameter is cloud-only (FIRE-1). Self-hosted uses
+            # the configured LLM (OpenAI/Ollama) without explicit agent.
         )
 
         # Extract the lawyers array from the result
