@@ -97,35 +97,55 @@ class LawyerExtractor:
         lawyers = []
 
         # Justia typically uses lawyer cards with specific classes
-        # Common selectors for lawyer listing containers
+        # Start with the most specific selectors first
         lawyer_selectors = [
-            'div.lawyer-card',
-            'div.attorney-listing',
-            'div.listing',
-            'div.lawyer-listing',
-            'div.profile-listing',
-            'div.card.lawyer',
-            '[class*="lawyer"]',
-            '[class*="attorney"]',
-            '[class*="profile"]',
+            'div.lawyer-card',                 # Very specific
+            'div.attorney-card',
+            'article.lawyer',
+            'article.attorney',
+            'div.listing-item',
+            'div.profile-card',
+            'div[itemtype*="Person"]',        # Schema.org Person markup
+            'div[itemtype*="Attorney"]',
+            'div.result',                     # Common for search results
+            'div.search-result',
+            # More general but still targeted
+            'div[class*="lawyer-card"]',
+            'div[class*="attorney-card"]',
+            'div[class*="profile-card"]',
+            'div[class*="listing"]',
         ]
 
         lawyer_containers = None
         for selector in lawyer_selectors:
             containers = soup.select(selector)
             if containers and len(containers) > 0:
-                lawyer_containers = containers
-                print(f"    Using selector: {selector} ({len(containers)} elements)")
-                break
+                # Filter out obvious page-level containers (too many children)
+                # A lawyer card typically has < 20 children elements
+                filtered = [c for c in containers if len(c.find_all()) < 50]
+                if filtered and len(filtered) > 0:
+                    lawyer_containers = filtered
+                    print(f"    Using selector: {selector} ({len(filtered)} elements after filtering)")
+                    break
 
         if not lawyer_containers:
-            # Fallback: try to find by common structure
-            lawyer_containers = soup.find_all('div', class_=lambda x: x and ('lawyer' in x.lower() or 'attorney' in x.lower() or 'profile' in x.lower()))
+            # Fallback: look for elements that contain profile links and names
+            all_candidates = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and ('lawyer' in x.lower() or 'attorney' in x.lower() or 'profile' in x.lower() or 'result' in x.lower()))
+            # Further filter: must contain a link to a lawyer profile page
+            lawyer_containers = []
+            for cand in all_candidates:
+                profile_link = cand.find('a', href=lambda h: h and '/lawyers/' in h)
+                name_elem = cand.find(['h3', 'h2', 'h1'], class_=lambda x: x and ('name' in x.lower() or 'title' in x.lower()))
+                if profile_link and len(cand.find_all()) < 50:
+                    lawyer_containers.append(cand)
+
+            print(f"    Fallback search found {len(lawyer_containers)} potential lawyer containers")
 
         if not lawyer_containers:
-            print("   Warning: No lawyer containers found with any selector")
+            print("   Warning: No lawyer containers found")
             return []
 
+        # Process each container
         for container in lawyer_containers:
             try:
                 lawyer = self._parse_lawyer_from_container(container)
@@ -135,6 +155,7 @@ class LawyerExtractor:
                 print(f"Warning: Skipping lawyer container due to error: {e}")
                 continue
 
+        print(f"    Successfully parsed {len(lawyers)} lawyers from {len(lawyer_containers)} containers")
         return lawyers
 
     def _parse_lawyer_from_container(self, container) -> Optional[Lawyer]:
