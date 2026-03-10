@@ -13,10 +13,6 @@ def write_lawyers_to_csv(
         lawyers: List of Lawyer objects to write
         output_path: Path to output CSV file (default: immigration_lawyers.csv)
     """
-    if not lawyers:
-        print("Warning: No lawyers to write to CSV")
-        return
-
     fieldnames = ["Name", "Phone", "Address", "Profile_URL", "Bio_Experience"]
 
     with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
@@ -33,4 +29,7 @@ def write_lawyers_to_csv(
                 }
             )
 
-    print(f"Successfully wrote {len(lawyers)} lawyers to {output_path}")
+    if lawyers:
+        print(f"Successfully wrote {len(lawyers)} lawyers to {output_path}")
+    else:
+        print("Warning: No lawyer data extracted; CSV contains only headers")
