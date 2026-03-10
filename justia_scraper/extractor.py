@@ -209,6 +209,15 @@ class LawyerExtractor:
             print(f"   Warning: Failed to create Lawyer for {name}: {e}")
             return None
 
+    def _extract_name(self, container) -> Optional[str]:
+        """Extract lawyer name with priority: profile link > headings > name classes."""
+        selectors = [
+            'a[href*="/lawyers/"]',  # Profile link (contains the name)
+            'h3', 'h2', 'h1',        # Common heading tags for names
+            '.lawyer-name', '.attorney-name', '.profile-name', '.name', '.title'
+        ]
+        return self._extract_text(container, selectors)
+
     def _extract_text(self, container, selectors: List[str]) -> Optional[str]:
         """Try multiple selectors to extract text."""
         for selector in selectors:
