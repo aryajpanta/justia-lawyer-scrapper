@@ -169,8 +169,14 @@ class LawyerExtractor:
             Lawyer object or None if parsing fails
         """
         # Extract name - typically in a heading or link
-        name = self._extract_text(container, ['h3', 'h2', 'h1', '.lawyer-name', '.attorney-name', '.profile-name', 'a[class*="name"]'])
+        name = self._extract_name(container)
         if not name:
+            # Debug: print why missing
+            profile_url = self._extract_profile_url(container)
+            print(f"   DEBUG: Container skipped - name='None', profile_url='{profile_url}'")
+            # Show a snippet of the container HTML for debugging
+            snippet = str(container)[:200]
+            print(f"   Container snippet: {snippet}...")
             return None
 
         # Extract phone - look for phone icons, tel: links, or phone class
@@ -182,6 +188,9 @@ class LawyerExtractor:
         # Extract profile URL - usually the first link to a profile page
         profile_url = self._extract_profile_url(container)
         if not profile_url:
+            print(f"   DEBUG: Container skipped - name='{name}', profile_url='None'")
+            snippet = str(container)[:200]
+            print(f"   Container snippet: {snippet}...")
             return None  # Profile URL is required
 
         # Extract bio/experience - look for bio, experience, or description
