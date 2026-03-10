@@ -6,7 +6,7 @@ Scrape lawyer listings from Justia using Firecrawl and export structured data to
 
 - Extracts lawyer data: Name, Phone, Address, Profile URL, Bio/Experience
 - Handles pagination automatically (up to configurable page limit)
-- Uses Firecrawl's FIRE-1 agent for reliable extraction
+- Works with both Firecrawl cloud API and self-hosted instances
 - Outputs clean CSV with UTF-8 encoding
 - Handles missing data gracefully (empty fields)
 
@@ -34,6 +34,47 @@ pip install -r requirements.txt
    ```env
    FIRECRAWL_API_KEY=fc-your_key_here
    ```
+
+### Optional: Self-Hosted Firecrawl
+
+If you want to avoid API rate limits and have full control, you can self-host Firecrawl locally:
+
+**Deploy Firecrawl:**
+
+```bash
+# Clone and set up Firecrawl
+git clone https://github.com/firecrawl/firecrawl.git
+cd firecrawl
+cp apps/api/.env.example .env
+
+# Edit .env - configure at minimum:
+#   PORT=3002
+#   HOST=0.0.0.0
+#   USE_DB_AUTHENTICATION=false
+#   BULL_AUTH_KEY=your_secret_here
+#   OPENAI_API_KEY=your-key  # or OLLAMA_BASE_URL for local LLM
+
+docker compose build  # First build: 5-15 minutes
+docker compose up -d
+
+# Verify
+curl http://localhost:3002/health
+```
+
+**Configure this scraper for local instance:**
+
+Either set in `.env`:
+```env
+FIRECRAWL_API_URL=http://localhost:3002
+FIRECRAWL_API_KEY=any_value  # Required but ignored if auth disabled
+```
+
+Or use command-line flag:
+```bash
+python -m justia_scraper --api-url http://localhost:3002 [URL]
+```
+
+**Note:** Self-hosted Firecrawl requires you to provide an LLM (OpenAI or Ollama) for schema extraction. The cloud-only FIRE-1 agent is **not** available in self-hosted mode, but the standard `/extract` endpoint works with your configured LLM.
 
 ## Usage
 
@@ -121,9 +162,9 @@ FIRECRAWL_API_KEY=your_key pytest tests/test_integration.py -v
 
 ## How It Works
 
-1. **Extraction**: Uses Firecrawl's `/v1/extract` endpoint with the FIRE-1 agent.
-   The agent navigates pagination automatically and extracts structured data
-   according to the provided schema.
+1. **Extraction**: Uses Firecrawl's `/v1/extract` endpoint with a JSON schema
+   and prompt guidance. Works with both cloud API and self-hosted instances
+   (self-hosted requires an LLM like OpenAI or Ollama configured).
 
 2. **Validation**: Pydantic validates each lawyer entry against the schema,
    skipping malformed data.
