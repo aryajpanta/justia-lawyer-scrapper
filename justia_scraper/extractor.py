@@ -142,25 +142,34 @@ class LawyerExtractor:
             if heading:
                 heading_text = heading.get_text(strip=True)
                 if heading_text and 5 < len(heading_text) < 100:
-                    # Skip if heading is a known city/county/utility term
-                    city_county_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-                                        'new-york', 'albany', 'erie', 'monroe', 'westchester',
-                                        'county', 'cities', 'counties', 'all-cities', 'all-counties',
-                                        'legal-aid', 'pro-bono', 'services', 'society', 'organization',
-                                        'firm', 'group', 'show-more', 'save', 'review', 'bay-shore',
-                                        'east-elmhurst', 'far-rockaway', 'forest-hills', 'huntington-station',
-                                        'jackson-heights', 'mount-vernon', 'new-rochelle', 'niagara-falls',
-                                        'queens-village', 'valley-stream', 'white-plains']
+                    # Skip if heading contains firm/organization keywords
+                    firm_keywords = ['lawyers', 'law firm', 'legal aid', 'pro bono', 'services',
+                                     'society', 'organization', 'group', 'attorneys', 'counsel',
+                                     'office', 'offices', 'center', 'clinic', 'department',
+                                     'all cities', 'all counties', 'by city', 'by county']
                     heading_lower = heading_text.lower()
-                    if any(term in heading_lower for term in city_county_terms):
-                        continue  # Skip city/county heading
+                    if any(keyword in heading_lower for keyword in firm_keywords):
+                        continue  # Skip firm/organization heading
+
+                    # Skip if heading is a known city/county/utility term
+                    location_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                                      'new-york', 'new-york-city', 'albany', 'erie', 'monroe',
+                                      'westchester', 'county', 'cities', 'counties', 'all-cities',
+                                      'all-counties', 'bay-shore', 'east-elmhurst', 'far-rockaway',
+                                      'forest-hills', 'huntington-station', 'jackson-heights',
+                                      'mount-vernon', 'new-rochelle', 'niagara-falls', 'queens-village',
+                                      'valley-stream', 'white-plains', 'nassau', 'suffolk', 'dutchess',
+                                      'oneida', 'onondaga', 'orange', 'richmond', 'rockland', 'saratoga']
+                    if any(term in heading_lower for term in location_terms):
+                        continue  # Skip location heading
 
                     # Basic name heuristics:
                     # - Contains at least 2 words (first + last)
                     # - Not all uppercase (avoid headings like "FEATURED ATTORNEYS")
                     words = heading_text.split()
-                    if len(words) >= 2:
-                        if not heading_text.isupper():
+                    if len(words) >= 2 and not heading_text.isupper():
+                        # Additional check: should not contain obvious non-name words
+                        if not any(bad in heading_lower for bad in ['view all', 'see all', 'browse', 'search']):
                             name = heading_text
 
             # Also check if the profile link text itself looks like a name
@@ -168,8 +177,8 @@ class LawyerExtractor:
                 link_text = profile_link.get_text(strip=True)
                 if link_text and 5 < len(link_text) < 100:
                     link_lower = link_text.lower()
-                    if any(term in link_lower for term in city_county_terms):
-                        continue  # Skip city/county link text
+                    if any(term in link_lower for term in firm_keywords + location_terms):
+                        continue  # Skip via link text check (but continue to next candidate, not container)
                     words = link_text.split()
                     if len(words) >= 2 and not link_text.isupper():
                         name = link_text
