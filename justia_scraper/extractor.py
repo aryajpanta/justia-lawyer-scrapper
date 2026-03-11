@@ -112,7 +112,8 @@ class LawyerExtractor:
             'register', 'advertise', 'blog', 'news', 'faq', 'support',
             'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
             'new-york', 'albany', 'erie', 'monroe', 'westchester',
-            'county', 'cities', 'counties'
+            'county', 'cities', 'counties', 'legal-aid', 'pro-bono', 'services',
+            'society', 'organization', 'firm', 'group'
         ]
 
         for link in all_links:
@@ -123,16 +124,20 @@ class LawyerExtractor:
                 continue
             last_segment = segments[-1]
 
-            # Skip if it's an explicitly excluded segment
+            # Skip if it's an explicitly excluded segment (exact match)
             if last_segment in excluded_segments:
+                continue
+
+            # Skip if contains excluded substrings (e.g., "legal-aid")
+            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services']):
                 continue
 
             # Skip if segment is a very short single word (likely city/county code)
             # e.g., "bronx" (5 letters), "ny" (2 letters), etc.
-            if len(last_segment) < 6 and last_segment.isalpha():
+            if len(last_segment) < 6 and last_segment.isalpha() and '-' not in last_segment:
                 continue
 
-            # Accept links with hyphens (typical律师 names: "john-doe")
+            # Accept links with hyphens (typical lawyer names: "john-doe")
             # OR longer single words (>8 chars) which could be full names
             if '-' in last_segment or len(last_segment) >= 8:
                 profile_links.append(link)
@@ -305,12 +310,35 @@ class LawyerExtractor:
         return None
 
     def _extract_profile_url(self, container) -> Optional[str]:
-        """Extract profile URL."""
+        """Extract profile URL - individual lawyer profile only."""
         links = container.find_all('a', href=True)
+        excluded_patterns = ['all-cities', 'all-counties', 'show-more', 'save', 'review', 'free',
+                            'features', 'pricing', 'about', 'contact', 'login', 'signup',
+                            'register', 'advertise', 'blog', 'news', 'faq', 'support',
+                            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                            'new-york', 'albany', 'erie', 'monroe', 'westchester',
+                            'county', 'cities', 'counties', 'legal-aid', 'pro-bono', 'services',
+                            'society', 'organization', 'firm', 'group']
+
         for link in links:
-            href = link['href']
-            # Must be a lawyer profile with practice area and location in path
-            if '/lawyers/' in href and len(href.split('/')) > 5:
+            href = link.get('href', '')
+            if not href or '/lawyers/' not in href:
+                continue
+            href_lower = href.lower()
+            segments = [s for s in href_lower.split('/') if s]
+            if len(segments) < 6:
+                continue
+            last_segment = segments[-1]
+
+            # Apply same filtering as profile link detection
+            if last_segment in excluded_patterns:
+                continue
+            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services']):
+                continue
+            if len(last_segment) < 6 and last_segment.isalpha() and '-' not in last_segment:
+                continue
+            if '-' in last_segment or len(last_segment) >= 8:
+                # Valid profile URL found
                 if href.startswith('/'):
                     href = f"https://www.justia.com{href}"
                 return href
