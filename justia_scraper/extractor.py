@@ -142,10 +142,22 @@ class LawyerExtractor:
             if heading:
                 heading_text = heading.get_text(strip=True)
                 if heading_text and 5 < len(heading_text) < 100:
+                    # Skip if heading is a known city/county/utility term
+                    city_county_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                                        'new-york', 'albany', 'erie', 'monroe', 'westchester',
+                                        'county', 'cities', 'counties', 'all-cities', 'all-counties',
+                                        'legal-aid', 'pro-bono', 'services', 'society', 'organization',
+                                        'firm', 'group', 'show-more', 'save', 'review', 'bay-shore',
+                                        'east-elmhurst', 'far-rockaway', 'forest-hills', 'huntington-station',
+                                        'jackson-heights', 'mount-vernon', 'new-rochelle', 'niagara-falls',
+                                        'queens-village', 'valley-stream', 'white-plains']
+                    heading_lower = heading_text.lower()
+                    if any(term in heading_lower for term in city_county_terms):
+                        continue  # Skip city/county heading
+
                     # Basic name heuristics:
                     # - Contains at least 2 words (first + last)
-                    # - Not all uppercase (avoidy headings like "FEATURED ATTORNEYS")
-                    # - Contains letters only (mostly)
+                    # - Not all uppercase (avoid headings like "FEATURED ATTORNEYS")
                     words = heading_text.split()
                     if len(words) >= 2:
                         if not heading_text.isupper():
@@ -155,6 +167,9 @@ class LawyerExtractor:
             if not name:
                 link_text = profile_link.get_text(strip=True)
                 if link_text and 5 < len(link_text) < 100:
+                    link_lower = link_text.lower()
+                    if any(term in link_lower for term in city_county_terms):
+                        continue  # Skip city/county link text
                     words = link_text.split()
                     if len(words) >= 2 and not link_text.isupper():
                         name = link_text
