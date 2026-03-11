@@ -27,23 +27,13 @@ class LawyerExtractor:
             )
         self.api_url = api_url or os.getenv("FIRECRAWL_API_URL")
 
-        # Only pass api_url if it's set, to avoid Firecrawl SDK errors with None
         if self.api_url:
             self.app = Firecrawl(api_key=self.api_key, api_url=self.api_url)
         else:
             self.app = Firecrawl(api_key=self.api_key)
 
     def extract_from_url(self, start_url: str, max_pages: int = 5) -> List[Lawyer]:
-        """
-        Extract lawyer data from Justia starting URL, following pagination up to max_pages.
-
-        Args:
-            start_url: The initial Justia URL to scrape
-            max_pages: Maximum number of pages to crawl (default: 5)
-
-        Returns:
-            List of Lawyer objects with extracted data
-        """
+        """Extract lawyer data from Justia with pagination."""
         lawyers = []
         current_url = start_url
         pages_scraped = 0
@@ -51,14 +41,12 @@ class LawyerExtractor:
         while pages_scraped < max_pages and current_url:
             print(f"Scraping page {pages_scraped + 1}: {current_url}")
 
-            # Scrape the page to get HTML content
             try:
                 scrape_result = self.app.scrape(url=current_url, formats=["html"])
             except Exception as e:
                 print(f"Error scraping {current_url}: {e}")
                 break
 
-            # Extract HTML from result
             if not hasattr(scrape_result, 'html') or not scrape_result.html:
                 print(f"No HTML content returned from {current_url}")
                 break
@@ -69,7 +57,6 @@ class LawyerExtractor:
 
             print(f"  Found {len(page_lawyers)} lawyers on this page")
 
-            # Find next page link
             if pages_scraped < max_pages - 1:
                 current_url = self._find_next_page(html, start_url)
                 if not current_url:
@@ -85,207 +72,130 @@ class LawyerExtractor:
 
     def _parse_lawyers_from_html(self, html: str) -> List[Lawyer]:
         """
-        Parse lawyer listings from HTML content.
+        Parse lawyer listings using structural heuristics to find individual profile cards.
 
-        Strategy: Find all links to individual lawyer profiles, then locate their container elements.
-
-        Args:
-            html: Raw HTML of the Justia directory page
-
-        Returns:
-            List of Lawyer objects
+        Strategy: Find elements that contain both a profile link AND a name-like heading,
+        while excluding common non-lawyer containers.
         """
         soup = BeautifulSoup(html, 'lxml')
         lawyers = []
 
-        # Find all links that point to individual lawyer profiles
-        # Pattern: /lawyers/[practice-area]/[location]/[lawyer-name]/
-        # Must have at least 6 segments to ensure lawyer name is present
-        all_links = soup.find_all('a', href=lambda h: h and '/lawyers/' in h and len(h.split('/')) > 5)
+        # Look for divs/articles that contain:
+        # - A link to a lawyer profile (href with /lawyers/ and lawyer-name pattern)
+        # - A heading (h2, h3) that looks like a person's name
+        candidate_containers = soup.find_all(['div', 'article', 'li'])
 
-        # Filter out non-lawyer links (cities, counties, utility pages)
-        profile_links = []
-        # Common city, county, and utility identifiers in link text or URL
-        excluded_terms = [
-            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-            'new-york', 'albany', 'erie', 'monroe', 'westchester', 'nassau', 'suffolk',
-            'county', 'cities', 'counties', 'all-cities', 'all-counties',
-            'legal-aid', 'pro-bono', 'services', 'society', 'organization',
-            'firm', 'group', 'show-more', 'save', 'review', 'free',
-            'features', 'pricing', 'about', 'contact', 'login', 'signup',
-            'register', 'advertise', 'blog', 'news', 'faq', 'support',
-            'see-more', 'view-all', 'browse', 'search', 'filter'
-        ]
+        print(f"    Checking {len(candidate_containers)} potential containers")
 
-        for link in all_links:
-            href = link.get('href', '').lower()
-            link_text = link.get_text(strip=True).lower()
-
-            # Extract the last segment of the URL path
-            segments = [s for s in href.split('/') if s]
-            if len(segments) < 6:
-                continue
-            last_segment = segments[-1]
-
-            # Skip if link text is a known city/county/utility term
-            if any(term in link_text for term in excluded_terms):
+        for container in candidate_containers:
+            # Skip if container is inside a sidebar, header, footer, or nav
+            parent_classes = []
+            parent = container
+            for _ in range(3):
+                parent = parent.find_parent(['div', 'nav', 'header', 'footer', 'aside'])
+                if parent:
+                    cls = parent.get('class', [])
+                    if cls:
+                        parent_classes.extend(cls)
+            skip_parent = any(x in ' '.join(parent_classes).lower() for x in ['sidebar', 'nav', 'header', 'footer', 'pagination', 'menu'])
+            if skip_parent:
                 continue
 
-            # Skip if last segment matches excluded terms
-            if last_segment in excluded_terms:
+            # Check if this container has a valid profile link
+            profile_link = None
+            links = container.find_all('a', href=True)
+            for link in links:
+                href = link.get('href', '').lower()
+                if '/lawyers/' not in href:
+                    continue
+                segments = [s for s in href.split('/') if s]
+                if len(segments) < 6:
+                    continue
+                last_seg = segments[-1]
+                # Profile link characteristics:
+                # - last segment is hyphenated OR long (>=8 chars) AND not a known city/county
+                # - NOT a utility page
+                city_county_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                                    'new-york', 'albany', 'erie', 'monroe', 'westchester',
+                                    'county', 'cities', 'counties', 'all-cities', 'all-counties',
+                                    'legal-aid', 'pro-bono', 'services', 'society', 'organization',
+                                    'firm', 'group', 'show-more', 'save', 'review']
+                if last_seg in city_county_terms:
+                    continue
+                if any(term in last_seg for term in ['legal-aid', 'pro-bono', 'services']):
+                    continue
+                if len(last_seg) < 6 and last_seg.isalpha() and '-' not in last_seg:
+                    continue
+                if '-' in last_seg or len(last_seg) >= 8:
+                    profile_link = link
+                    break
+
+            if not profile_link:
                 continue
 
-            # Skip if contains excluded substrings
-            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services', 'society']):
+            # Check if container has a heading that looks like a person's name
+            name = None
+            heading = container.find(['h1', 'h2', 'h3', 'h4'])
+            if heading:
+                heading_text = heading.get_text(strip=True)
+                if heading_text and 5 < len(heading_text) < 100:
+                    # Basic name heuristics:
+                    # - Contains at least 2 words (first + last)
+                    # - Not all uppercase (avoidy headings like "FEATURED ATTORNEYS")
+                    # - Contains letters only (mostly)
+                    words = heading_text.split()
+                    if len(words) >= 2:
+                        if not heading_text.isupper():
+                            name = heading_text
+
+            # Also check if the profile link text itself looks like a name
+            if not name:
+                link_text = profile_link.get_text(strip=True)
+                if link_text and 5 < len(link_text) < 100:
+                    words = link_text.split()
+                    if len(words) >= 2 and not link_text.isupper():
+                        name = link_text
+
+            if not name:
                 continue
 
-            # Skip if segment is a very short single word (<6 chars, no hyphen)
-            if len(last_segment) < 6 and last_segment.isalpha() and '-' not in last_segment:
-                continue
+            # This container looks like a lawyer card!
+            # Extract other fields
+            phone = self._extract_phone(container)
+            address = self._extract_address(container)
+            profile_url = profile_link.get('href')
+            if profile_url.startswith('/'):
+                profile_url = f"https://www.justia.com{profile_url}"
+            bio_experience = self._extract_bio(container)
 
-            # Accept links with hyphens (lawyer names like "john-doe")
-            # OR longer single words (>=8 chars) that aren't excluded
-            if '-' in last_segment or len(last_segment) >= 8:
-                profile_links.append(link)
-
-        print(f"    Found {len(profile_links)} potential profile links (after filtering)")
-
-        if not profile_links:
-            return []
-
-        # For each profile link, find its container (card)
-        containers = []
-        for link in profile_links:
-            # Walk up the DOM to find a suitable container
-            parent = link.find_parent(['div', 'article', 'li'])
-            depth = 0
-            while parent and depth < 10:
-                parent_class = parent.get('class', [])
-                if parent_class:
-                    class_str = ' '.join(parent_class).lower()
-                    # Exclude obvious non-lawyer containers
-                    if any(bad in class_str for bad in ['banner', 'group', 'stripe', 'header', 'footer', 'sidebar', 'pagination', 'nav']):
-                        parent = parent.find_parent(['div', 'article', 'li'])
-                        depth += 1
-                        continue
-                    # Accept if it seems like a card (reasonable size)
-                    if len(parent.find_all()) < 200:
-                        containers.append(parent)
-                        break
-                parent = parent.find_parent(['div', 'article', 'li'])
-                depth += 1
-
-        # Deduplicate by ID or by content hash
-        unique_containers = []
-        seen_ids = set()
-        for c in containers:
-            cid = id(c)
-            if cid not in seen_ids:
-                unique_containers.append(c)
-                seen_ids.add(cid)
-
-        print(f"    Found {len(unique_containers)} unique lawyer containers")
-
-        # Parse each container
-        for container in unique_containers:
             try:
-                lawyer = self._parse_lawyer_from_container(container)
-                if lawyer:
-                    lawyers.append(lawyer)
+                lawyer = Lawyer(
+                    Name=name,
+                    Phone=phone,
+                    Address=address,
+                    Profile_URL=profile_url,
+                    Bio_Experience=bio_experience,
+                )
+                lawyers.append(lawyer)
             except Exception as e:
-                print(f"Warning: Skipping lawyer container due to error: {e}")
+                print(f"   Warning: Failed to create Lawyer for {name}: {e}")
                 continue
 
-        print(f"    Successfully parsed {len(lawyers)} lawyers from {len(unique_containers)} containers")
+        print(f"    Successfully parsed {len(lawyers)} lawyers")
         return lawyers
-
-    def _parse_lawyer_from_container(self, container) -> Optional[Lawyer]:
-        """
-        Extract lawyer data from a single container element.
-
-        Args:
-            container: BeautifulSoup element representing one lawyer listing
-
-        Returns:
-            Lawyer object or None if parsing fails
-        """
-        # Extract name - typically the profile link text or heading
-        name = self._extract_name(container)
-        if not name:
-            profile_url = self._extract_profile_url(container)
-            print(f"   DEBUG: Container skipped - name='None', profile_url='{profile_url}'")
-            snippet = str(container)[:200]
-            print(f"   Container snippet: {snippet}...")
-            return None
-
-        # Extract phone
-        phone = self._extract_phone(container)
-
-        # Extract address
-        address = self._extract_address(container)
-
-        # Extract profile URL (required)
-        profile_url = self._extract_profile_url(container)
-        if not profile_url:
-            print(f"   DEBUG: Container skipped - name='{name}', profile_url='None'")
-            snippet = str(container)[:200]
-            print(f"   Container snippet: {snippet}...")
-            return None
-
-        # Extract bio/experience
-        bio_experience = self._extract_bio(container)
-
-        # Validate and create Lawyer object
-        try:
-            return Lawyer(
-                Name=name,
-                Phone=phone,
-                Address=address,
-                Profile_URL=profile_url,
-                Bio_Experience=bio_experience,
-            )
-        except Exception as e:
-            print(f"   Warning: Failed to create Lawyer for {name}: {e}")
-            return None
-
-    def _extract_name(self, container) -> Optional[str]:
-        """Extract lawyer name."""
-        # Priority: profile link text, then headings, then name classes
-        selectors = [
-            'a[href*="/lawyers/"]',  # Profile link (most reliable)
-            'h3', 'h2', 'h1', 'h4',
-            '.lawyer-name', '.attorney-name', '.profile-name', '.name', '.title', '.card-title'
-        ]
-        return self._extract_text(container, selectors)
-
-    def _extract_text(self, container, selectors: List[str]) -> Optional[str]:
-        """Try multiple selectors to extract text."""
-        for selector in selectors:
-            element = container.select_one(selector)
-            if element:
-                text = element.get_text(strip=True)
-                if text and len(text) > 2:
-                    # Filter out obvious non-name text
-                    if any(bad in text.lower() for bad in ['privacy', 'terms', 'cookie', 'copyright']):
-                        continue
-                    return text
-        return None
 
     def _extract_phone(self, container) -> Optional[str]:
         """Extract phone number."""
-        # tel: links
         tel_link = container.select_one('a[href^="tel:"]')
         if tel_link:
             return tel_link['href'].replace('tel:', '').strip()
 
-        # Phone class elements
         phone_elements = container.find_all(class_=lambda x: x and 'phone' in x.lower())
         for elem in phone_elements:
             text = elem.get_text(strip=True)
             if text and any(c.isdigit() for c in text):
                 return text
 
-        # Regex pattern
         import re
         text = container.get_text()
         phone_match = re.search(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
@@ -296,58 +206,20 @@ class LawyerExtractor:
 
     def _extract_address(self, container) -> Optional[str]:
         """Extract address."""
-        # address tag
         addr_elem = container.find('address')
         if addr_elem:
             return addr_elem.get_text(strip=True)
 
-        # Address class
         addr_class = container.select_one('.address, .location, .addr, .street-address')
         if addr_class:
             return addr_class.get_text(strip=True)
 
-        # Look for city/state pattern
         lines = container.find_all(['p', 'div', 'span'])
         for line in lines:
             text = line.get_text(strip=True)
             if text and ',' in text and any(c.isalpha() for c in text) and 10 < len(text) < 100:
                 return text
 
-        return None
-
-    def _extract_profile_url(self, container) -> Optional[str]:
-        """Extract profile URL - individual lawyer profile only."""
-        links = container.find_all('a', href=True)
-        excluded_patterns = ['all-cities', 'all-counties', 'show-more', 'save', 'review', 'free',
-                            'features', 'pricing', 'about', 'contact', 'login', 'signup',
-                            'register', 'advertise', 'blog', 'news', 'faq', 'support',
-                            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-                            'new-york', 'albany', 'erie', 'monroe', 'westchester',
-                            'county', 'cities', 'counties', 'legal-aid', 'pro-bono', 'services',
-                            'society', 'organization', 'firm', 'group']
-
-        for link in links:
-            href = link.get('href', '')
-            if not href or '/lawyers/' not in href:
-                continue
-            href_lower = href.lower()
-            segments = [s for s in href_lower.split('/') if s]
-            if len(segments) < 6:
-                continue
-            last_segment = segments[-1]
-
-            # Apply same filtering as profile link detection
-            if last_segment in excluded_patterns:
-                continue
-            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services']):
-                continue
-            if len(last_segment) < 6 and last_segment.isalpha() and '-' not in last_segment:
-                continue
-            if '-' in last_segment or len(last_segment) >= 8:
-                # Valid profile URL found
-                if href.startswith('/'):
-                    href = f"https://www.justia.com{href}"
-                return href
         return None
 
     def _extract_bio(self, container) -> Optional[str]:
