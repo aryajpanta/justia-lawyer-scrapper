@@ -105,40 +105,46 @@ class LawyerExtractor:
 
         # Filter out non-lawyer links (cities, counties, utility pages)
         profile_links = []
-        # Explicitly excluded paths (utility pages, city/county index pages)
-        excluded_segments = [
-            'all-cities', 'all-counties', 'show-more', 'save', 'review', 'free',
+        # Common city, county, and utility identifiers in link text or URL
+        excluded_terms = [
+            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+            'new-york', 'albany', 'erie', 'monroe', 'westchester', 'nassau', 'suffolk',
+            'county', 'cities', 'counties', 'all-cities', 'all-counties',
+            'legal-aid', 'pro-bono', 'services', 'society', 'organization',
+            'firm', 'group', 'show-more', 'save', 'review', 'free',
             'features', 'pricing', 'about', 'contact', 'login', 'signup',
             'register', 'advertise', 'blog', 'news', 'faq', 'support',
-            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-            'new-york', 'albany', 'erie', 'monroe', 'westchester',
-            'county', 'cities', 'counties', 'legal-aid', 'pro-bono', 'services',
-            'society', 'organization', 'firm', 'group'
+            'see-more', 'view-all', 'browse', 'search', 'filter'
         ]
 
         for link in all_links:
             href = link.get('href', '').lower()
+            link_text = link.get_text(strip=True).lower()
+
             # Extract the last segment of the URL path
             segments = [s for s in href.split('/') if s]
             if len(segments) < 6:
                 continue
             last_segment = segments[-1]
 
-            # Skip if it's an explicitly excluded segment (exact match)
-            if last_segment in excluded_segments:
+            # Skip if link text is a known city/county/utility term
+            if any(term in link_text for term in excluded_terms):
                 continue
 
-            # Skip if contains excluded substrings (e.g., "legal-aid")
-            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services']):
+            # Skip if last segment matches excluded terms
+            if last_segment in excluded_terms:
                 continue
 
-            # Skip if segment is a very short single word (likely city/county code)
-            # e.g., "bronx" (5 letters), "ny" (2 letters), etc.
+            # Skip if contains excluded substrings
+            if any(excluded in last_segment for excluded in ['legal-aid', 'pro-bono', 'services', 'society']):
+                continue
+
+            # Skip if segment is a very short single word (<6 chars, no hyphen)
             if len(last_segment) < 6 and last_segment.isalpha() and '-' not in last_segment:
                 continue
 
-            # Accept links with hyphens (typical lawyer names: "john-doe")
-            # OR longer single words (>8 chars) which could be full names
+            # Accept links with hyphens (lawyer names like "john-doe")
+            # OR longer single words (>=8 chars) that aren't excluded
             if '-' in last_segment or len(last_segment) >= 8:
                 profile_links.append(link)
 
