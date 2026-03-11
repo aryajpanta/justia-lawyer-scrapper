@@ -141,14 +141,24 @@ class LawyerExtractor:
                              'society', 'organization', 'group', 'attorneys', 'counsel',
                              'office', 'offices', 'center', 'clinic', 'department',
                              'all cities', 'all counties', 'by city', 'by county']
-            location_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-                              'new-york', 'new-york-city', 'albany', 'erie', 'monroe',
-                              'westchester', 'county', 'cities', 'counties', 'all-cities',
-                              'all-counties', 'bay-shore', 'east-elmhurst', 'far-rockaway',
-                              'forest-hills', 'huntington-station', 'jackson-heights',
-                              'mount-vernon', 'new-rochelle', 'niagara-falls', 'queens-village',
-                              'valley-stream', 'white-plains', 'nassau', 'suffolk', 'dutchess',
-                              'oneida', 'onondaga', 'orange', 'richmond', 'rockland', 'saratoga']
+            location_terms = [
+                # Hyphenated forms (as they appear in URLs)
+                'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                'new-york', 'new-york-city', 'albany', 'erie', 'monroe',
+                'westchester', 'county', 'cities', 'counties', 'all-cities',
+                'all-counties', 'bay-shore', 'east-elmhurst', 'far-rockaway',
+                'forest-hills', 'huntington-station', 'jackson-heights',
+                'mount-vernon', 'new-rochelle', 'niagara-falls', 'queens-village',
+                'valley-stream', 'white-plains', 'nassau', 'suffolk', 'dutchess',
+                'oneida', 'onondaga', 'orange', 'richmond', 'rockland', 'saratoga',
+                # Space-separated forms (as they appear in headings)
+                'bronx', 'brooklyn', 'queens', 'manhattan', 'staten island',
+                'new york', 'new york city', 'albany', 'erie', 'monroe',
+                'westchester', 'bay shore', 'east elmhurst', 'far rockaway',
+                'forest hills', 'huntington station', 'jackson heights',
+                'mount vernon', 'new rochelle', 'niagara falls', 'queens village',
+                'valley stream', 'white plains'
+            ]
 
             # Check if container has a heading that looks like a person's name
             name = None
@@ -160,11 +170,11 @@ class LawyerExtractor:
 
                     # Skip if heading contains firm/organization keywords
                     if any(keyword in heading_lower for keyword in firm_keywords):
-                        continue  # Skip firm/organization heading
+                        continue  # Skip entire container
 
                     # Skip if heading is a known city/county/utility term
                     if any(term in heading_lower for term in location_terms):
-                        continue  # Skip location heading
+                        continue  # Skip entire container
 
                     # Basic name heuristics:
                     # - Contains at least 2 words (first + last)
@@ -181,7 +191,7 @@ class LawyerExtractor:
                 if link_text and 5 < len(link_text) < 100:
                     link_lower = link_text.lower()
                     if any(term in link_lower for term in firm_keywords + location_terms):
-                        continue  # Skip via link text check (but continue to next candidate, not container)
+                        continue  # Skip entire container
                     words = link_text.split()
                     if len(words) >= 2 and not link_text.isupper():
                         name = link_text
