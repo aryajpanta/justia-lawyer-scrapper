@@ -136,30 +136,33 @@ class LawyerExtractor:
             if not profile_link:
                 continue
 
+            # Define exclusion lists upfront
+            firm_keywords = ['lawyers', 'law firm', 'legal aid', 'pro bono', 'services',
+                             'society', 'organization', 'group', 'attorneys', 'counsel',
+                             'office', 'offices', 'center', 'clinic', 'department',
+                             'all cities', 'all counties', 'by city', 'by county']
+            location_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+                              'new-york', 'new-york-city', 'albany', 'erie', 'monroe',
+                              'westchester', 'county', 'cities', 'counties', 'all-cities',
+                              'all-counties', 'bay-shore', 'east-elmhurst', 'far-rockaway',
+                              'forest-hills', 'huntington-station', 'jackson-heights',
+                              'mount-vernon', 'new-rochelle', 'niagara-falls', 'queens-village',
+                              'valley-stream', 'white-plains', 'nassau', 'suffolk', 'dutchess',
+                              'oneida', 'onondaga', 'orange', 'richmond', 'rockland', 'saratoga']
+
             # Check if container has a heading that looks like a person's name
             name = None
             heading = container.find(['h1', 'h2', 'h3', 'h4'])
             if heading:
                 heading_text = heading.get_text(strip=True)
                 if heading_text and 5 < len(heading_text) < 100:
-                    # Skip if heading contains firm/organization keywords
-                    firm_keywords = ['lawyers', 'law firm', 'legal aid', 'pro bono', 'services',
-                                     'society', 'organization', 'group', 'attorneys', 'counsel',
-                                     'office', 'offices', 'center', 'clinic', 'department',
-                                     'all cities', 'all counties', 'by city', 'by county']
                     heading_lower = heading_text.lower()
+
+                    # Skip if heading contains firm/organization keywords
                     if any(keyword in heading_lower for keyword in firm_keywords):
                         continue  # Skip firm/organization heading
 
                     # Skip if heading is a known city/county/utility term
-                    location_terms = ['bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
-                                      'new-york', 'new-york-city', 'albany', 'erie', 'monroe',
-                                      'westchester', 'county', 'cities', 'counties', 'all-cities',
-                                      'all-counties', 'bay-shore', 'east-elmhurst', 'far-rockaway',
-                                      'forest-hills', 'huntington-station', 'jackson-heights',
-                                      'mount-vernon', 'new-rochelle', 'niagara-falls', 'queens-village',
-                                      'valley-stream', 'white-plains', 'nassau', 'suffolk', 'dutchess',
-                                      'oneida', 'onondaga', 'orange', 'richmond', 'rockland', 'saratoga']
                     if any(term in heading_lower for term in location_terms):
                         continue  # Skip location heading
 
