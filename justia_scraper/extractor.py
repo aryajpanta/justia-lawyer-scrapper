@@ -105,29 +105,37 @@ class LawyerExtractor:
 
         # Filter out non-lawyer links (cities, counties, utility pages)
         profile_links = []
-        excluded_patterns = [
-            'bronx', 'albany', 'kings', 'queens', 'new-york', 'manhattan',  # Common city names
-            'county', 'all-cities', 'all-counties', 'show-more',  # Utility pages
-            'save', 'review', 'free', 'features', 'pricing', 'about', 'contact',  # Common nav
-            'login', 'signup', 'register', 'advertise', 'blog', 'news'
+        # Explicitly excluded paths (utility pages, city/county index pages)
+        excluded_segments = [
+            'all-cities', 'all-counties', 'show-more', 'save', 'review', 'free',
+            'features', 'pricing', 'about', 'contact', 'login', 'signup',
+            'register', 'advertise', 'blog', 'news', 'faq', 'support',
+            'bronx', 'brooklyn', 'queens', 'manhattan', 'staten-island',
+            'new-york', 'albany', 'erie', 'monroe', 'westchester',
+            'county', 'cities', 'counties'
         ]
 
         for link in all_links:
             href = link.get('href', '').lower()
-            # Skip if contains any excluded pattern
-            if any(excluded in href for excluded in excluded_patterns):
-                continue
-            # Skip if the last segment is too short (<3 chars) or too long (>50)
+            # Extract the last segment of the URL path
             segments = [s for s in href.split('/') if s]
             if len(segments) < 6:
                 continue
             last_segment = segments[-1]
-            if len(last_segment) < 3 or len(last_segment) > 50:
+
+            # Skip if it's an explicitly excluded segment
+            if last_segment in excluded_segments:
                 continue
-            # Skip if last segment has no hyphen (single words are often cities)
-            if '-' not in last_segment and last_segment.isalpha():
+
+            # Skip if segment is a very short single word (likely city/county code)
+            # e.g., "bronx" (5 letters), "ny" (2 letters), etc.
+            if len(last_segment) < 6 and last_segment.isalpha():
                 continue
-            profile_links.append(link)
+
+            # Accept links with hyphens (typical律师 names: "john-doe")
+            # OR longer single words (>8 chars) which could be full names
+            if '-' in last_segment or len(last_segment) >= 8:
+                profile_links.append(link)
 
         print(f"    Found {len(profile_links)} potential profile links (after filtering)")
 
