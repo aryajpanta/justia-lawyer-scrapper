@@ -100,9 +100,36 @@ class LawyerExtractor:
 
         # Find all links that point to individual lawyer profiles
         # Pattern: /lawyers/[practice-area]/[location]/[lawyer-name]/
-        profile_links = soup.find_all('a', href=lambda h: h and '/lawyers/' in h and len(h.split('/')) > 5)
+        # Must have at least 6 segments to ensure lawyer name is present
+        all_links = soup.find_all('a', href=lambda h: h and '/lawyers/' in h and len(h.split('/')) > 5)
 
-        print(f"    Found {len(profile_links)} potential profile links")
+        # Filter out non-lawyer links (cities, counties, utility pages)
+        profile_links = []
+        excluded_patterns = [
+            'bronx', 'albany', 'kings', 'queens', 'new-york', 'manhattan',  # Common city names
+            'county', 'all-cities', 'all-counties', 'show-more',  # Utility pages
+            'save', 'review', 'free', 'features', 'pricing', 'about', 'contact',  # Common nav
+            'login', 'signup', 'register', 'advertise', 'blog', 'news'
+        ]
+
+        for link in all_links:
+            href = link.get('href', '').lower()
+            # Skip if contains any excluded pattern
+            if any(excluded in href for excluded in excluded_patterns):
+                continue
+            # Skip if the last segment is too short (<3 chars) or too long (>50)
+            segments = [s for s in href.split('/') if s]
+            if len(segments) < 6:
+                continue
+            last_segment = segments[-1]
+            if len(last_segment) < 3 or len(last_segment) > 50:
+                continue
+            # Skip if last segment has no hyphen (single words are often cities)
+            if '-' not in last_segment and last_segment.isalpha():
+                continue
+            profile_links.append(link)
+
+        print(f"    Found {len(profile_links)} potential profile links (after filtering)")
 
         if not profile_links:
             return []
@@ -118,7 +145,7 @@ class LawyerExtractor:
                 if parent_class:
                     class_str = ' '.join(parent_class).lower()
                     # Exclude obvious non-lawyer containers
-                    if any(bad in class_str for bad in ['banner', 'group', 'stripe', 'header', 'footer', 'sidebar', 'pagination']):
+                    if any(bad in class_str for bad in ['banner', 'group', 'stripe', 'header', 'footer', 'sidebar', 'pagination', 'nav']):
                         parent = parent.find_parent(['div', 'article', 'li'])
                         depth += 1
                         continue
