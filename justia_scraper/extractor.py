@@ -199,6 +199,13 @@ class LawyerExtractor:
             if not name:
                 continue
 
+            # Final check: ensure extracted name is not a location/firm after all
+            if name:
+                name_lower = ' '.join(name.lower().split())
+                if any(term in name_lower for term in firm_keywords + location_terms):
+                    # print(f"   DEBUG: Name '{name}' rejected (firm/location)")
+                    continue
+
             # This container looks like a lawyer card!
             # Extract other fields
             phone = self._extract_phone(container)
