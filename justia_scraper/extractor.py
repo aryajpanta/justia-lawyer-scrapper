@@ -92,14 +92,17 @@ class LawyerExtractor:
             parent_classes = []
             parent = container
             for _ in range(3):
+                if parent is None:
+                    break
                 parent = parent.find_parent(['div', 'nav', 'header', 'footer', 'aside'])
                 if parent:
                     cls = parent.get('class', [])
                     if cls:
                         parent_classes.extend(cls)
-            skip_parent = any(x in ' '.join(parent_classes).lower() for x in ['sidebar', 'nav', 'header', 'footer', 'pagination', 'menu'])
-            if skip_parent:
-                continue
+            if parent_classes:
+                skip_parent = any(x in ' '.join(parent_classes).lower() for x in ['sidebar', 'nav', 'header', 'footer', 'pagination', 'menu'])
+                if skip_parent:
+                    continue
 
             # Check if this container has a valid profile link
             profile_link = None
